@@ -9,3 +9,4 @@ tokio = { version = "1", features = ["full"] }
 serde = { version = "1.0.104", features = ["derive"] }
 serde_json = "1.0.48"
 iced = { version = "0.12", features = [ "canvas", "tokio" ] }
+space_trader_api = { path = "./src/api/" }
