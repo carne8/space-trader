@@ -1,8 +1,13 @@
+#![allow(dead_code)]
+
 mod space_traders;
 
-use std::{default, fs};
+use std::{fs, result::Result};
+use iced::keyboard;
+use iced::*;
 
 use serde::Deserialize;
+use space_traders::types::Symbol;
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
@@ -37,10 +42,6 @@ async fn download_systems() -> Result<(), String> {
 //     Ok(())
 // }
 
-use iced::{
-    event, executor, mouse::*, widget::{canvas::{self, Cache}, Canvas}, Application, Color, Command, Element, Length, Point, Renderer, Settings, Size, Subscription, Theme, Transformation, Vector
-};
-
 pub fn main() -> iced::Result {
     Example::run(Settings {
         antialiasing: true,
@@ -48,15 +49,32 @@ pub fn main() -> iced::Result {
     })
 }
 
+struct Zoom {
+    scale: f32,
+    offset: Vector
+}
+impl Default for Zoom {
+    fn default() -> Self {
+        Zoom {
+            scale: 1.,
+            offset: Vector::ZERO
+        }
+    }
+}
+
+#[derive(Default)]
+struct Navigation {
+    offset_start_position: Option<Point>,
+    mouse_current_position: Point,
+    offset: Vector
+}
+
 #[derive(Default)]
 struct Example {
-    cache: Cache,
+    cache: widget::canvas::Cache,
     universe: Vec<space_traders::types::System>,
-    offset: Vector,
-    mouse_current_position: Point,
-    offset_start_position: Option<Point>,
-    zoom: f32,
-    zoom_position: Option<Point>,
+    zoom: Zoom,
+    nav: Navigation
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -83,7 +101,6 @@ impl Application for Example {
 
         (Example {
             universe,
-            zoom: 0.,
             ..Example::default()
         }, Command::none())
     }
@@ -96,25 +113,34 @@ impl Application for Example {
         match message {
             Message::MouseWheelScrolled(scroll_delta) => {
                 let zoom_coef = 0.1;
-                self.zoom = (self.zoom + scroll_delta * zoom_coef).max(-10.);
-                self.zoom_position = Some(self.mouse_current_position);
+                let scale = (scroll_delta * zoom_coef).max(-1.).min(1.).exp().max(0.01);
+
+                let mouse = self.nav.mouse_current_position;
+
+                self.zoom = Zoom {
+                    scale: self.zoom.scale * scale,
+                    offset: Vector::new(
+                        self.zoom.offset.x * scale + (mouse.x - mouse.x * scale),
+                        self.zoom.offset.y * scale + (mouse.y - mouse.y * scale)
+                    )
+                };
             },
             Message::MouseDown => {
-                self.offset_start_position = Some(
+                self.nav.offset_start_position = Some(
                     Point {
-                        x: self.offset.x + self.mouse_current_position.x,
-                        y: self.offset.y + self.mouse_current_position.y
+                        x: self.nav.mouse_current_position.x - self.nav.offset.x,
+                        y: self.nav.mouse_current_position.y - self.nav.offset.y
                     }
                 );
             }
             Message::MouseUp => {
-                self.offset_start_position = None;
+                self.nav.offset_start_position = None;
             }
             Message::MouseMoved(position) => {
-                self.mouse_current_position = position;
+                self.nav.mouse_current_position = position;
 
-                if let Some(mouse_down_position) = self.offset_start_position {
-                    self.offset = mouse_down_position - position;
+                if let Some(mouse_down_position) = self.nav.offset_start_position {
+                    self.nav.offset = position - mouse_down_position;
                 }
             }
         }
@@ -124,7 +150,7 @@ impl Application for Example {
     }
 
     fn view(&self) -> Element<Message> {
-        Canvas::new(self)
+        widget::Canvas::new(self)
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
@@ -132,14 +158,26 @@ impl Application for Example {
 
     fn subscription(&self) -> iced::Subscription<Message> {
         event::listen_with(|event, _| match event {
-            iced::Event::Mouse(mouse_event) => match mouse_event {
-                Event::WheelScrolled { delta: ScrollDelta::Pixels { x: _, y } }
-                | Event::WheelScrolled { delta: ScrollDelta::Lines { x: _, y } } => Some(Message::MouseWheelScrolled(y)),
+            Event::Keyboard(keyboard::Event::KeyPressed { key, location: _, modifiers: _, text: _ }) => {
+                match key.as_ref() {
+                    keyboard::Key::Character("=") => Some(Message::MouseWheelScrolled(1.)),
+                    keyboard::Key::Character("-") => Some(Message::MouseWheelScrolled(-1.)),
+                    _ => None
+                }
+            },
 
-                Event::ButtonPressed(Button::Left) => Some(Message::MouseDown),
-                Event::ButtonReleased(Button::Left) => Some(Message::MouseUp),
+            Event::Mouse(mouse_event) => match mouse_event {
+                mouse::Event::WheelScrolled {
+                    delta: mouse::ScrollDelta::Pixels { x: _, y },
+                }
+                | mouse::Event::WheelScrolled {
+                    delta: mouse::ScrollDelta::Lines { x: _, y },
+                } => Some(Message::MouseWheelScrolled(y)),
 
-                Event::CursorMoved { position } => Some(Message::MouseMoved(position)),
+                mouse::Event::ButtonPressed(mouse::Button::Left) => Some(Message::MouseDown),
+                mouse::Event::ButtonReleased(mouse::Button::Left) => Some(Message::MouseUp),
+
+                mouse::Event::CursorMoved { position } => Some(Message::MouseMoved(position)),
                 _ => None,
             },
             _ => None,
@@ -147,7 +185,7 @@ impl Application for Example {
     }
 }
 
-impl canvas::Program<Message> for Example {
+impl widget::canvas::Program<Message> for Example {
     type State = ();
 
     fn draw(
@@ -156,43 +194,25 @@ impl canvas::Program<Message> for Example {
         renderer: &Renderer,
         _theme: &Theme,
         bounds: iced::Rectangle,
-        _cursor: Cursor,
-    ) -> Vec<<Renderer as canvas::Renderer>::Geometry> {
+        _cursor: mouse::Cursor,
+    ) -> Vec<<Renderer as widget::canvas::Renderer>::Geometry> {
         let geometry = self.cache.draw(renderer, bounds.size(), |frame| {
-            let center = frame.center();
-            let zoom_position = self.zoom_position.unwrap_or(center);
+            frame.fill_rectangle(Point::ORIGIN, frame.size(), Color::BLACK);
 
             let width = frame.width().min(frame.height());
             let max = self.universe.iter().map(|system| system.x.max(system.y)).max().unwrap() as f32;
 
             // The ratio for the systems to be drawn in the center of the screen and to fill the screen
             let base_zoom_ratio = width / max;
-            let zoom = (self.zoom.exp() - 1.).max(-0.999);
-
-            println!("Zoom: {}", zoom);
-
-            frame.fill_rectangle(Point::ORIGIN, frame.size(), Color::BLACK);
 
             for system in &self.universe {
-                let x = system.x as f32;
-                let y = system.y as f32;
-
-                let apply_zoom = |value: f32, pos: f32, zoom: f32| (value - pos) * zoom + value;
-
-                // let point = Point {
-                //     x: center.x - self.offset.x + x * base_zoom_ratio * zoom,
-                //     y: center.y - self.offset.y + y * base_zoom_ratio * zoom
-                // };
-
-                let normalized_pos = Point {
-                    x: x,
-                    y: y
+                let mut point = Point {
+                    x: system.x as f32 * base_zoom_ratio + self.nav.offset.x,
+                    y: system.y as f32 * base_zoom_ratio + self.nav.offset.y
                 };
 
-                let point = Point {
-                    x: apply_zoom(normalized_pos.x - self.offset.x, zoom_position.x, zoom) * base_zoom_ratio + center.x,
-                    y: apply_zoom(normalized_pos.y - self.offset.y, zoom_position.y, zoom) * base_zoom_ratio + center.y
-                };
+                point.x = point.x * self.zoom.scale + self.zoom.offset.x;
+                point.y = point.y * self.zoom.scale + self.zoom.offset.y;
 
                 if !bounds.contains(point) {
                     continue;
