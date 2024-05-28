@@ -69,7 +69,7 @@ impl Application for App {
                 let zoom_coef = 0.1;
                 let scale = (scroll_delta * zoom_coef).max(-1.).min(1.).exp().max(0.01);
 
-                let mouse = self.nav.mouse_current_position;
+                let mouse = self.nav.mouse_current_position - self.nav.offset;
 
                 self.zoom = Zoom {
                     scale: self.zoom.scale * scale,
@@ -81,10 +81,7 @@ impl Application for App {
                 self.cache.clear();
             }
             Message::MouseDown => {
-                self.nav.offset_start_position = Some(Point {
-                    x: self.nav.mouse_current_position.x - self.nav.offset.x,
-                    y: self.nav.mouse_current_position.y - self.nav.offset.y,
-                });
+                self.nav.offset_start_position = Some(self.nav.mouse_current_position - self.nav.offset);
             }
             Message::MouseUp => {
                 self.nav.offset_start_position = None;
@@ -157,12 +154,12 @@ impl widget::canvas::Program<Message> for App {
 
             for system in &self.universe {
                 let mut point = Point {
-                    x: system.x as f32 * base_zoom_ratio + frame.size().width/2. + self.nav.offset.x,
-                    y: system.y as f32 * base_zoom_ratio + frame.size().height/2. + self.nav.offset.y,
+                    x: system.x as f32 * base_zoom_ratio + frame.size().width/2.,
+                    y: system.y as f32 * base_zoom_ratio + frame.size().height/2.,
                 };
 
-                point.x = point.x * self.zoom.scale + self.zoom.offset.x;
-                point.y = point.y * self.zoom.scale + self.zoom.offset.y;
+                point.x = point.x * self.zoom.scale + self.zoom.offset.x + self.nav.offset.x;
+                point.y = point.y * self.zoom.scale + self.zoom.offset.y + self.nav.offset.y;
 
                 if !bounds.contains(point) {
                     continue;
