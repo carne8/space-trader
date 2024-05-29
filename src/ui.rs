@@ -1,5 +1,7 @@
 use iced::*;
+use iced::widget::canvas::{Path, Fill};
 use space_trader_api::models;
+use widget::canvas::Style;
 
 #[derive(Default)]
 pub struct App {
@@ -47,15 +49,30 @@ impl SizedWaypoint {
         SizedWaypoint {
             x: waypoint.x as f32,
             y: waypoint.y as f32,
-            size: 3.
+            size: 30.
+        }
+    }
+
+    pub fn apply_scale(&self, scale: f32) -> SizedWaypoint {
+        SizedWaypoint {
+            x: self.x * scale,
+            y: self.y * scale,
+            size: self.size * scale
         }
     }
 }
+
+const GALAXY_COLOR_0: Color = color!(228, 148, 152);
+const GALAXY_COLOR_1: Color = color!(166, 194, 221);
+const GALAXY_COLOR_2: Color = color!(39, 47, 65);
+
 struct SizedSystem {
     x: f32,
     y: f32,
     size: f32,
-    waypoints: Vec<SizedWaypoint>
+    r#type: models::SystemType,
+    waypoints: Vec<SizedWaypoint>,
+    color: Color
 }
 impl SizedSystem {
     fn from_system(system: models::System) -> SizedSystem {
@@ -75,7 +92,23 @@ impl SizedSystem {
             x: system.x as f32,
             y: system.y as f32,
             size,
-            waypoints
+            r#type: system.r#type,
+            waypoints,
+            color: Color::WHITE
+        }
+    }
+    pub fn apply_scale(&self, scale: f32) -> SizedSystem {
+        SizedSystem {
+            x: self.x * scale,
+            y: self.y * scale,
+            size: self.size * scale,
+            r#type: self.r#type,
+            waypoints: self.
+                waypoints
+                .iter()
+                .map(|w| w.apply_scale(scale))
+                .collect(),
+            color: self.color
         }
     }
 }
@@ -121,16 +154,35 @@ impl Application for App {
             systems
                 .into_iter()
                 .map(|s| {
-                    let mut s = SizedSystem::from_system(s);
-                    s.x = s.x * base_scale + WINDOW_SIZE.width/2.;
-                    s.y = s.y * base_scale + WINDOW_SIZE.height/2.;
+                    let mut new_s = SizedSystem::from_system(s.clone()).apply_scale(base_scale);
+                    new_s.x += WINDOW_SIZE.width/2.;
+                    new_s.y += WINDOW_SIZE.height/2.;
 
-                    for w in s.waypoints.iter_mut() {
-                        w.x *= base_scale;
-                        w.y *= base_scale;
-                    }
+                    let color = {
+                        let system_relative_pos = {
+                            let x = s.x as f32;
+                            let y = s.y as f32;
+                            let distance_from_center = (x.powi(2) + y.powi(2)).sqrt();
+                            distance_from_center / galaxy_radius
+                        };
+                        let r =
+                            (1.-system_relative_pos) * GALAXY_COLOR_1.r
+                            + system_relative_pos * GALAXY_COLOR_0.r;
 
-                    s
+                        let g =
+                            (1.-system_relative_pos) * GALAXY_COLOR_1.g
+                            + system_relative_pos * GALAXY_COLOR_0.g;
+
+                        let b =
+                            (1.-system_relative_pos) * GALAXY_COLOR_1.b
+                            + system_relative_pos * GALAXY_COLOR_0.b;
+
+
+                        color!(r * 255., g * 255., b * 255.)
+                    };
+
+                    new_s.color = color;
+                    new_s
                 })
                 .collect()
         };
@@ -228,29 +280,37 @@ impl widget::canvas::Program<Message> for App {
             frame.fill_rectangle(Point::ORIGIN, frame.size(), Color::BLACK);
 
             for system in &self.galaxy {
+                let zoomed_system = system.apply_scale(self.zoom.scale);
                 let point = Point {
-                    x: system.x * self.zoom.scale + self.zoom.offset.x + self.nav.offset.x,
-                    y: system.y * self.zoom.scale + self.zoom.offset.y + self.nav.offset.y
+                    x: zoomed_system.x + self.zoom.offset.x + self.nav.offset.x,
+                    y: zoomed_system.y + self.zoom.offset.y + self.nav.offset.y
                 };
 
-                if !bounds.contains(point) {
+                if !bounds.expand(zoomed_system.size).contains(point) {
                     continue;
                 }
 
-                frame.fill_rectangle(point, Size::new(1., 1.), Color::WHITE);
+                if self.zoom.scale > 8. {
+                    frame.fill(
+                        &Path::circle(point, zoomed_system.size),
+                        Fill {
+                            style: Style::Solid(zoomed_system.color),
+                            ..Fill::default()
+                        }
+                    );
 
-                if self.zoom.scale > 5. {
-                    let waypoints_coords = system
-                        .waypoints
-                        .iter()
-                        .map(|w| Point::new(
-                            point.x + (w.x * self.zoom.scale),
-                            point.y + (w.y * self.zoom.scale)
-                        ));
-
-                    waypoints_coords.for_each(|p| {
-                        frame.fill_rectangle(p, Size::new(1., 1.), Color::from_rgb8(255, 0, 0))
-                    });
+                    for w in zoomed_system.waypoints {
+                        frame.fill_rectangle(
+                            Point::new(
+                                point.x + w.x - w.size/2.,
+                                point.y + w.y - w.size/2.
+                            ),
+                            Size::new(w.size, w.size),
+                            Color::WHITE
+                        )
+                    }
+                } else {
+                    frame.fill_rectangle(point, Size::new(2., 2.), zoomed_system.color)
                 }
             }
         });
