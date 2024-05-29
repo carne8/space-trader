@@ -1,7 +1,6 @@
 mod ui;
 mod download_systems;
 
-use iced::Application;
 use download_systems::download_systems;
 
 
@@ -13,8 +12,5 @@ async fn main() -> iced::Result {
         download_systems().await.unwrap();
     }
 
-    ui::App::run(iced::Settings {
-        antialiasing: true,
-        ..iced::Settings::default()
-    })
+    ui::run()
 }
