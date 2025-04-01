@@ -11,7 +11,7 @@
 
 If this is your first time running the program, it will download the [systems](https://spacetraders.io/game-concepts/systems-waypoints) and store them in a local file. This can take some time.  
 
-One the systems are downloaded, you can omit the `--token` flag in future runs.
+Once the systems are downloaded, you can omit the `--token` flag in future runs.
 
 # Refresh the systems
 If you want to re-download the systems, you can use the `--download-systems` flag:
